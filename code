@@ -1,0 +1,206 @@
+import requests, re, json
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support import expected_conditions as EC
+
+import time
+import json
+
+def get_list_of_documents(idprocesso,cookies):
+
+    headers = {
+          }
+
+    params = {
+        'service': 'DocumentoProcessoService',
+        'start': '0',
+        'limit': '200',
+        'METHOD': 'obtemLista',
+        'is_sharing': 'false',
+        'labelValue': '',
+        'ID_PROCESSO': {str(idprocesso)},
+        'serviceMethod': 'lista',
+        '_dc': '1718657041228',
+        'callback': 'stcCallback1007',
+    }
+
+    response = requests.get(
+        'url',
+        params=params,
+        cookies=cookies,
+        headers=headers,
+    )
+    
+    print(response.text)
+    print(response.status_code)
+    start = re.search('"rows":',response.text).end()
+    final = re.search('],"msgs"',response.text).start() + 1
+
+    data = response.text[start:final]
+    # print(data)
+    json_data = json.loads(data)
+
+    documents_ids = []
+    for document in json_data:
+        documents_ids.append(str(document["ID_PROCESSO_DOCUMENTO"]))
+
+    return documents_ids
+
+def download_files(idprocesso,documentList,cookies):
+    
+    documentsListString = "'"
+    for document in documentList:
+        documentsListString += document+","
+    documentsListString = documentsListString[:-1]+"'"
+
+    headers = {
+         }
+
+    params = {
+        'ext-comp-1074': '20',
+        'ext-comp-1085': '',
+        'ID_PROCESSO_DOCUMENTO': {str(documentList[0])},
+        'FILTRO': '',
+        'ID_PROCESSO': {str(idprocesso)},
+        'METHOD': 'multipleDownload',
+        'MULTIPLEID': {documentsListString},
+        'ID_PROCESSO_EVENTO': '',
+    }
+
+    response = requests.get(
+        'url',
+        params=params,
+        cookies=cookies,
+        headers=headers,
+    )
+
+    if response.status_code == 500:
+        headers = {
+                   }
+
+        params = {
+            'ext-comp-1072': '20',
+            'ext-comp-1083': '',
+            'ID_PROCESSO_DOCUMENTO': {str(documentList[0])},
+            'ID_PROCESSO': {str(idprocesso)},
+            'FILTRO': '',
+            'METHOD': 'multipleDownload',
+            'MULTIPLEID': {str(documentList)},
+            'ID_PROCESSO_EVENTO': '',
+        }
+
+        response = requests.get(
+            'url',
+            params=params,
+            cookies=cookies,
+            headers=headers,
+        )
+
+        open('path\{0}.zip'.format(str(idprocesso)), 'wb').write(response.content)
+
+    else:
+
+        open('path\{0}.zip'.format(str(idprocesso)), 'wb').write(response.content)
+
+def get_cookies():
+    webdriver_path = 'path'
+    download_dir = "path"
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_experimental_option("prefs", {
+        "download.default_directory": download_dir,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True
+    })
+
+    service = Service(webdriver_path)
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    actions = ActionChains(driver)
+
+    wait = WebDriverWait(driver, 30)
+
+    url = 'url'
+    driver.get(url)
+
+    username = 'username'
+    password = 'password'
+
+    # Wait for the username and password fields to be visible
+    username_field = wait.until(EC.visibility_of_element_located((By.NAME, 'LOGIN')))
+    password_field = wait.until(EC.visibility_of_element_located((By.NAME, 'SENHA_TMP')))
+
+    # Enter credentials and submit the form
+    username_field.send_keys(username)
+    password_field.send_keys(password)
+    password_field.send_keys(Keys.RETURN)
+
+    try:
+        time.sleep(3)
+
+        ok = wait.until(EC.visibility_of_element_located((By.ID, 'ext-gen83')))
+        ok.click()
+
+        ok_again = wait.until(EC.visibility_of_element_located((By.ID, 'ext-gen22')))
+        ok_again.click()
+
+    except Exception as e:
+
+        print(e)
+        pass
+
+    cookies_accept = wait.until(EC.visibility_of_element_located((By.XPATH, '/html/body/div[1]/div/a')))
+    cookies_accept.click()
+
+    time.sleep(5)
+
+    cookies = driver.get_cookies()
+
+    cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+
+    cookies_json = json.dumps(cookies_dict, indent=4)
+
+    # wait.until(EC.visibility_of_element_located((By.CLASS_NAME, "botao-sair")))
+    # logout_button = driver.find_element(By.CLASS_NAME, "botao-sair")
+    # logout_button.click()
+
+    driver.quit()
+    return cookies_dict
+
+def pipeline(idprocesso):
+    print("Iniciando Processo:" + str(idprocesso))
+    lista_de_documentos = get_list_of_documents(idprocesso,new_cookies)
+    # print(lista_de_documentos)
+    if len(lista_de_documentos) == 0:
+        print("PROCESSO NÃO EXISTE: "+ str(idprocesso))
+    else:
+        download_files(idprocesso,lista_de_documentos,new_cookies)
+
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+from functools import partial
+import time
+
+
+df = pd.read_excel('path')
+list_of_processos = df['ID_PROCESSO'].values.tolist()
+
+chunk_size = 10
+ 
+# Dividindo a lista em sublistas de tamanho 800
+sublists = [list_of_processos[i:i + chunk_size] for i in range(0, len(list_of_processos), chunk_size)]
+
+num_threads = 5
+
+# while True:
+for lista in sublists:
+    new_cookies = get_cookies()
+
+    # Criar um pool de threads e processar as páginas em paralelo
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        executor.map(pipeline, lista)
